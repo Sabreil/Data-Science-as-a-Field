@@ -1,0 +1,202 @@
+---
+title: "Covid19 Data"
+author: "Richard Michalka"
+date: "2024-03-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(plotly)
+```
+
+# Import Data from Github
+```{r import data}
+url_base <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+# Filenames for the specific datasets
+filenames <- c("time_series_covid19_confirmed_global.csv",
+               "time_series_covid19_deaths_global.csv",
+               "time_series_covid19_recovered_global.csv")
+
+# Constructing the full URLs to the raw CSV files
+urls <- paste0(url_base, filenames)
+names(urls) <- c("Confirmed", "Deaths", "Recovered")
+
+# Reading in the datasets
+datasets <- lapply(urls, read_csv, show_col_types = FALSE)
+names(datasets) <- names(urls)
+```
+
+
+# Data Tidying
+```{r data Tidying}
+# Tidy the datasets
+tidy_datasets <- lapply(datasets, function(df) {
+  # Sanitize the column names: replace '/' and ' ' with '.'
+  names(df) <- make.names(names(df))
+
+  # Convert the data from wide format to long format
+  df %>%
+    pivot_longer(
+      cols = -matches("Province|Country|Lat|Long"),  # Use regular expression to exclude non-date columns
+      names_to = "Date_Time",
+      values_to = "Cases"
+    ) %>%
+    mutate(
+      # Remove 'X' from column names if they exist
+      Date_Time = gsub("^X", "", Date_Time),
+      # Parse the date-time strings into Date objects
+      Date = parse_date_time(Date_Time, orders = c("mdy HM", "mdy"))
+    ) %>%
+    # Convert the POSIXct to Date only
+    mutate(Date = as.Date(Date)) %>%
+    # Drop unnecessary columns
+    select(-c(Lat, Long, Date_Time))
+})
+
+```
+#Viz 1
+```{r Cases Heatmap, fig.cap="Heatmap of COVID-19 cases over time"}
+confirmed_cases <- tidy_datasets$Confirmed
+
+# Create a summary of total cases by date
+cases_by_date <- confirmed_cases %>%
+  group_by(Date) %>%
+  summarize(TotalCases = sum(Cases, na.rm = TRUE), .groups = "drop")
+
+# Generate the heatmap
+ggplot(cases_by_date, aes(x = Date, y = 1, fill = TotalCases)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "red") +
+  labs(title = "Heatmap of COVID-19 Cases Over Time", x = "Date", y = "", fill = "Total Cases") +
+  theme_minimal() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        legend.position = "bottom")
+```
+
+
+### Visualization 2: Bar Chart Comparing Cases, Deaths, and Recoveries
+
+A bar chart that compares the total cases, deaths, and recoveries across the top affected countries gives a quick visual summary of the situation.
+
+```{r Comparison Bar Chart, fig.cap="Comparison of COVID-19 cases, deaths, and recoveries"}
+confirmed_cases <- tidy_datasets$Confirmed
+deaths <- tidy_datasets$Deaths
+recovered <- tidy_datasets$Recovered
+
+# Summarize the latest total cases, deaths, and recoveries by country
+latest_totals <- confirmed_cases %>%
+  group_by(`Country.Region`) %>%
+  summarize(LatestConfirmed = max(Cases), .groups = "drop") %>%
+  left_join(deaths %>%
+              group_by(`Country.Region`) %>%
+              summarize(LatestDeaths = max(Cases), .groups = "drop"), by = "Country.Region") %>%
+  left_join(recovered %>%
+              group_by(`Country.Region`) %>%
+              summarize(LatestRecovered = max(Cases), .groups = "drop"), by = "Country.Region")
+
+# Top 10 affected countries
+top_countries <- latest_totals %>%
+  arrange(desc(LatestConfirmed)) %>%
+  slice_head(n = 10)
+
+# Create the bar chart
+ggplot(top_countries, aes(x = reorder(`Country.Region`, -LatestConfirmed), y = LatestConfirmed)) +
+  geom_bar(stat = "identity", aes(fill = "Confirmed"), position = "dodge") +
+  geom_bar(stat = "identity", aes(y = LatestDeaths, fill = "Deaths"), position = "dodge") +
+  geom_bar(stat = "identity", aes(y = LatestRecovered, fill = "Recovered"), position = "dodge") +
+  scale_fill_manual(values = c("Confirmed" = "blue", "Deaths" = "red", "Recovered" = "green")) +
+  labs(title = "COVID-19 Cases, Deaths, and Recoveries in Top 10 Affected Countries",
+       x = "Country", y = "Count", fill = "Type") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  coord_flip()  # Flip coordinates for horizontal bars
+```
+#Viz #3 Bubble Chart
+```{r Interactive Bubble Chart, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Interactive bubble chart of COVID-19 impact"}
+library(plotly)
+
+confirmed_cases <- tidy_datasets$Confirmed
+deaths <- tidy_datasets$Deaths
+recovered <- tidy_datasets$Recovered
+
+# Summarize the latest total cases, deaths, and recoveries by country
+latest_totals <- confirmed_cases %>%
+  group_by(`Country.Region`) %>%
+  summarize(LatestConfirmed = max(Cases), .groups = "drop") %>%
+  left_join(deaths %>%
+              group_by(`Country.Region`) %>%
+              summarize(LatestDeaths = max(Cases), .groups = "drop"), by = "Country.Region") %>%
+  left_join(recovered %>%
+              group_by(`Country.Region`) %>%
+              summarize(LatestRecovered = max(Cases), .groups = "drop"), by = "Country.Region") %>%
+  mutate(RecoveryRate = LatestRecovered / LatestConfirmed * 100)
+
+# Create the bubble chart
+plot_ly(latest_totals, x = ~LatestConfirmed, y = ~LatestDeaths,
+        size = ~LatestConfirmed, color = ~RecoveryRate,
+        text = ~`Country.Region`, hoverinfo = "text+x+y+size+color",
+        type = 'scatter', mode = 'markers',
+        marker = list(sizemode = 'diameter', sizeref = 0.05, opacity = 0.5)) %>%
+  layout(title = 'COVID-19 Impact: Confirmed Cases vs. Deaths (Bubble Size: Total Confirmed Cases, Color: Recovery Rate)',
+         xaxis = list(title = 'Total Confirmed Cases'),
+         yaxis = list(title = 'Total Deaths'),
+         hovermode = 'closest')
+```
+
+
+```{r Model Forecasting, fig.cap="Linear Model Forecast of COVID-19 Cases"}
+confirmed_cases <- tidy_datasets$Confirmed
+
+# Create a summary of total cases by date globally
+global_cases_summary <- confirmed_cases %>%
+  group_by(Date) %>%
+  summarize(TotalGlobalCases = sum(Cases, na.rm = TRUE), .groups = "drop")
+
+# Create a numerical representation of the date for the linear model
+global_cases_summary <- global_cases_summary %>%
+  mutate(DaysSinceFirstCase = as.numeric(Date - min(Date)))
+
+# Build the linear model
+model <- lm(TotalGlobalCases ~ DaysSinceFirstCase, data = global_cases_summary)
+
+# Create a dataframe for future predictions
+future_dates <- data.frame(DaysSinceFirstCase = as.numeric(seq(from = max(global_cases_summary$DaysSinceFirstCase),
+                                                               to = max(global_cases_summary$DaysSinceFirstCase) + 30,
+                                                               by = 1)))
+
+# Predict future cases
+predictions <- predict(model, newdata = future_dates)
+
+# Add predictions to the original data
+future_dates$PredictedCases <- predictions
+future_dates$Date <- min(global_cases_summary$Date) + future_dates$DaysSinceFirstCase
+
+# Visualize the actual data along with the forecast
+ggplot(global_cases_summary, aes(x = Date, y = TotalGlobalCases)) +
+  geom_line(color = "blue", linewidth = 1) +
+  geom_line(data = future_dates, aes(x = Date, y = PredictedCases), color = "red", linewidth = 1, linetype = "dashed") +
+  labs(title = "Forecasting COVID-19 Cases with Linear Regression",
+       x = "Date",
+       y = "Total Global Cases") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y")
+```
+
+# Bias and conclusion
+To wrap up, the charts and models we've shown give a quick look at how COVID-19 has evolved and affected us. But, it's important to remember that there might be gaps and biases in our data and how we've analyzed it.
+
+Our data comes from public sources, and it's not perfect. Different places report their numbers differently, and not all cases or deaths get counted the same everywhere. This means we might not be seeing the full picture of the pandemic's impact.
+
+The forecasting model we used, linear regression, is pretty basic. It assumes that the virus spreads at a constant rate, which overlooks the real-world complexities of how diseases spread and how actions like lockdowns or mask-wearing can change things.
+
+Also, our visuals don't show how the virus affects people differently based on the size of their population or consider important details like how many people recover or die from the virus. These aspects are key to truly understanding the depth and severity of COVID-19.
+
+So, when looking at COVID-19 data, it's vital to keep these limitations in mind. Moving forward, we should use more detailed models and draw from a wider range of data to get a clearer and more accurate picture of the pandemic.
+```
