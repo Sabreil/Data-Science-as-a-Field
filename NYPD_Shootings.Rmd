@@ -1,0 +1,65 @@
+---
+title: "NYPD Shooting Incident Data Analysis"
+author: "Richard Michalka"
+date: "2024-03-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(cluster)
+library(factoextra)
+library(lubridate)
+library(dbscan)
+```
+
+```{r import}
+# Import the dataset
+url_in <- "https://richardmichalka.com/wp-content/uploads/2024/03/NYPD_Shooting_Incident_Data__Historic_.csv"
+
+nypd_shooting_data <- read_csv("https://richardmichalka.com/wp-content/uploads/2024/03/NYPD_Shooting_Incident_Data__Historic_.csv")
+
+
+# Initial data exploration use these
+glimpse(nypd_shooting_data)
+summary(nypd_shooting_data)
+
+# Data Tidying
+shooting_data_tidy <- nypd_shooting_data %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME)) %>%
+  select(-c(Lon_Lat))
+
+# Data Analysis and Visualization
+```
+
+```{r plot_shootings_over_time}
+# Visualization 1: Number of Shootings Over Time
+ggplot(shooting_data_tidy, aes(x = OCCUR_DATE)) +
+  geom_histogram(stat = "count") +
+  labs(title = "Number of Shootings Over Time", x = "Date", y = "Count")
+```
+
+```{r plot_incidents_across_boroughs}
+# Visualization 2: Distribution of Incidents Across Boroughs
+ggplot(shooting_data_tidy, aes(x = BORO, fill = BORO)) +
+  geom_bar() +
+  labs(title = "Distribution of Shooting Incidents Across Boroughs", x = "Borough", y = "Count")
+```
+
+```{r modeling}
+# Aggregate data to get counts per OCCUR_DATE
+shooting_data_agg <- shooting_data_tidy %>%
+  group_by(OCCUR_DATE) %>%
+  summarise(count = n())
+
+# Linear model with the aggregated data
+model <- lm(count ~ OCCUR_DATE, data = shooting_data_agg)
+summary(model)
+```
+
+# Conclusion and Bias Consideration
+
+In conclusion, our analysis of NYPD Shooting Incident Data revealed patterns and trends in the distribution of shooting incidents across different boroughs and over time. Recognizing potential biases is crucial for accurate interpretation. One source of bias stems from the data collection process, possibly leading to uneven incident capture across boroughs due to reporting practices or community-police relations. Personally, I had to ensure my analysis remained unbiased by letting the data guide the conclusions, despite preconceived notions about crime patterns. Addressing these biases head-on allows for a balanced and data-driven analysis, emphasizing the importance of continual questioning and refinement of our approach.
